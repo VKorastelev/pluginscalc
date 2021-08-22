@@ -1,0 +1,15 @@
+# Object files
+*.o
+
+# Libraries
+*.a
+*.la
+*.lo
+*.so
+
+# Executables
+*.out
+
+# Debug files
+*.su
+

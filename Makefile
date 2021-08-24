@@ -3,7 +3,7 @@ srcfiles = $(shell find ./ -maxdepth 1 -name "*.c")
 objfiles = $(srcfiles:.c=.o)
 CC := gcc
 CFLAGS = -Wall#-pthread
-LDFLAGS =# -lpthread
+LDFLAGS = -ldl# -lpthread
 
 #$(info VAR="$(objfiles)")
 

@@ -1,5 +1,5 @@
-/** Калькулятор 0.1 
- * @file calc.c
+/** Калькулятор 0.1 с подключением плагинов
+ * @file pluginscalc.c
  * @author VKorastelev
  * 
  * @detailed
@@ -7,17 +7,19 @@
  */
 
 #include <stdio.h>
+#include <dlfcn.h>
+#include <sys/types.h>
+#include <dirent.h>
 #include <string.h>
 #include <limits.h>
 #include <locale.h>
 #include <stdbool.h>
 #include <errno.h>
-//#include <malloc.h>
 #include <stdlib.h>
 #include "getdata.h"
 #include "mymath.h"
 
-
+#define PATH_TO_THE_PLUGINS "./plugins/"
 #define MAX_NUM_CALC_FUNCS 4
 
 void print_menu_command();
@@ -31,11 +33,7 @@ int get_numeral(
         long *numeral,
         long const min_limit,
         long const max_limit);
-/*
-int get_number(long *inp_number);
 
-int clean_stdin();
-*/
 enum menu_command
 {
     COMMAND_EXIT,
@@ -72,7 +70,15 @@ int (*pfunc[MAX_NUM_CALC_FUNCS])(long, long, long *) = {
 
 int num_calc_funcs = 0;
 
+int num_plugins = 0;
+
 struct calc_fun *arr_calc_funs;
+
+int open_plugins(int *const numpl);
+
+int close_plugins(int *const numpl);
+
+int load_calc_func(char *filename);
 
 int main(void)
 {
@@ -84,12 +90,22 @@ int main(void)
 
     printf("\033c");
 
+    ret = open_plugins(&num_plugins);
+
+    if(0 == num_plugins)
+    {
+        error = 1;
+        puts("Ошибка! Плагины не загружены");
+        goto finally;
+    }
+   
+
     arr_calc_funs = calloc(MAX_NUM_CALC_FUNCS, sizeof(struct calc_fun));
     
     if (NULL == arr_calc_funs)
     {
         error = true;
-        puts("Память под структуры функций калькулятора не выделена!");
+        puts("Ошибка! Память под структуры функций калькулятора не выделена!");
         goto finally;
     }
 
@@ -264,7 +280,7 @@ void print_rezult_calc_func(long rez, int err)
 // Вывод главного меню
 void print_menu_command()
 {
-    printf("\033c");
+//    printf("\033c");
     puts("\033[7mКалькулятор целых чисел\033[0m\n");
     puts("\033[4mАрифметические операции и команды:\033[0m");
 
@@ -311,84 +327,198 @@ int get_numeral(
 
     return ret;
 }
-/*
-int get_number(long *const inp_number)
+
+int open_plugins(int *const numpl)
 {
-    char *pstr = NULL;
-    char *endptr;
-    int n;
+    DIR *pdir;
+    struct dirent *pdirent;
+    
+    char plugin_fformat[] = ".so";
+    char *rez_search;
+
     int ret = 0;
 
-
-    errno = 0;
-
-    n = scanf("%m[^\n]", &pstr);
-
-    if (1 == n)
+    pdir = opendir("./plugins");
+    
+    if (NULL == pdir)
     {
-        //printf("read: %s\n", pstr);
-
-        errno = 0;
-        *inp_number = strtol(pstr, &endptr, 10);
-
-        ret = 0;
-
-        if ((ERANGE == errno
-            && (LONG_MAX == *inp_number || LONG_MIN == *inp_number))
-            || (0 != errno && 0 == *inp_number))
-        {
-            perror("Ошибка strtol(...)");
-            ret = 1;
-        }
-
-        if (endptr == pstr)
-        {
-           puts("Число не введено, повторите ввод!");
-           ret = 1;
-        }
-
-        free(pstr);
-    }
-    else if (0 != errno)
-    {
-        perror("Ошибка scanf(...)");
+        perror("Ошибка при открытии дирректории ./plugins'");
         ret = 1;
-    }
-    else 
-    {
-        puts("Повторите ввод!");
-        ret = 1;
-    }
-
-    if (EOF == clean_stdin())
-    {
-        ret = EOF;
         goto finally;
     }
+
+    while (NULL != (pdirent = readdir(pdir)))
+    {
+        rez_search = strstr(pdirent->d_name, plugin_fformat);
+        if (NULL != rez_search && 3 == strlen(rez_search))
+        {
+            printf("%s\n", pdirent->d_name);
+            ret = load_calc_func(pdirent->d_name);
+            if (0 == ret)
+            {
+                (*numpl)++;
+            }
+            else
+            {
+                printf("Ошибка при загрузке плагина с именем %s\n", pdirent->d_name);
+            }
+        }
+        
+    }
+
+    closedir(pdir);
+
+    printf("num_plugins = %d\n", *numpl);
 
  finally:
 
     return ret;
 }
-*/
-/*
-int clean_stdin()
+
+
+int load_calc_func(char *filename)
 {
+    void *handle;
     int ret = 0;
-    int ch_trash;
+    size_t num_char = 0;
 
-    do
+    char namedir[] = PATH_TO_THE_PLUGINS;
+    char *path = NULL;
+    char *error = NULL;
+
+//    int (*calc_func)(long, long, long *const);
+//    char *error;
+//    struct Info_calc_func *info_calc_func;
+    
+
+//    char path[256] = {0};
+
+    // sizeof(namedir) - размер с завершающим '\0'
+    // strlen(filename) - длинна имени файла без учета '\0'
+    size_t full_size_path = sizeof(namedir) + strlen(filename);
+
+    if (full_size_path > 256)
     {
-        ch_trash = getchar();
+        puts("Размер строки полного пути к файлу плагина превышает 256 символов (с учетом"
+            " '\\0')");
+        ret = 1;
+        goto finally;
+    }
 
-    } while ('\n' != ch_trash && EOF != ch_trash);
+    printf("path = %ld, sizeof(namedir) = %ld, strlen(filename) = %ld\n",
+            full_size_path,
+            sizeof(namedir),
+            strlen(filename));
 
-    if (EOF == ch_trash)
+    path = calloc(full_size_path, sizeof(char));
+    if (NULL == path)
     {
-        puts("\nВвод из stdin прекращен (ввели EOF)");
-        ret = EOF;
+        perror("Память под полный путь к плагину не выделена calloc(...) в функции"
+                " load_calc_func(...)");
+        ret = 1;
+        goto finally;
+    }
+
+    num_char = sprintf(path, "%s%s", namedir, filename);
+
+    if (-1 == num_char || (num_char + 1) != full_size_path)
+    {
+        puts("Ошибка sptintf(...) в функци load_calc_func(...)");
+        ret = 1;
+        goto finally;
+    }
+
+    printf("полный путь %s, n = %ld\n", path, num_char);
+
+    handle = dlopen(path, RTLD_LAZY);
+    if (NULL == handle)
+    {
+        fprintf(stderr, "Ошибка dlopen(...) в функци load_calc_func(...) %s\n",
+                dlerror());
+        ret = 1;
+        goto finally;
+    }
+
+    dlerror();
+
+    // Загрузка структуры
+
+    error = dlerror();
+    if (NULL != error)
+    {
+        fprintf(stderr, "Ошибка dlsym(...) в функци load_calc_func(...) %s\n",
+                error);
+        
+        if (0 != dlclose(handle))
+        {
+            error = dlerror();
+            if (error != NULL)
+            {
+                fprintf(stderr, "Ошибка dlclose(...) в функци load_calc_func(...) %s\n",
+                error);
+            }
+        }
+        ret = 1;
+        goto finally;
+    }
+
+
+    if (0 != dlclose(handle))
+    {
+        error = dlerror();
+        if (error != NULL)
+        {
+            fprintf(stderr, "Ошибка dlclose(...) в функци load_calc_func(...) %s\n",
+            error);
+        }
+    }
+    ret = 1;
+    goto finally;
+
+
+/*
+    info_calc_func = dlsym(handle1, "info_calc_func");
+
+    //calc_func = (int (*)(long, long, long *const))dlsym(handle, "my_add");
+
+    calc_func = dlsym(handle1, info_calc_func->calc_func);
+
+    (*calc_func)(a, b, &c);
+
+    printf("Func name = %s  calc_func = %s\n",
+            info_calc_func->name,
+            info_calc_func->calc_func);
+
+    printf("a = %ld  b = %ld  c = %ld\n", a, b, c);
+
+    info_calc_func = dlsym(handle2, "info_calc_func");
+
+    //calc_func = (int (*)(long, long, long *const))dlsym(handle, "my_add");
+
+    calc_func = dlsym(handle2, info_calc_func->calc_func);
+
+    (*calc_func)(a, b, &c);
+
+    printf("Func name = %s  calc_func = %s\n",
+            info_calc_func->name,
+            info_calc_func->calc_func);
+
+    printf("a = %ld  b = %ld  c = %ld\n", a, b, c);
+*/
+
+ finally:
+
+    if (NULL != path)
+    {
+        free(path);
     }
 
     return ret;
 }
-*/
+
+int close_plugins(int *const numpl)
+{
+    int ret = 0;
+//    dlclose(handle);
+    return ret;
+}

@@ -13,3 +13,4 @@
 # Debug files
 *.su
 
+.vimrc

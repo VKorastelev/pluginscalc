@@ -7,6 +7,7 @@
  */
 
 #include <stdio.h>
+#include <unistd.h>
 #include <dlfcn.h>
 #include <sys/types.h>
 #include <dirent.h>
@@ -17,22 +18,10 @@
 #include <errno.h>
 #include <stdlib.h>
 #include "getdata.h"
-#include "mymath.h"
+#include "./plugins/infocalcfunc.h"
+#include "pluginscalc.h"
 
 #define PATH_TO_THE_PLUGINS "./plugins/"
-#define MAX_NUM_CALC_FUNCS 4
-
-void print_menu_command();
-
-int run_calc_func(int num_func);
-
-void print_rezult_calc_func(long rez, int err);
-
-int get_numeral(
-        char const *strname,
-        long *numeral,
-        long const min_limit,
-        long const max_limit);
 
 enum menu_command
 {
@@ -48,106 +37,46 @@ enum error_calc_func
     ER_DIFF,
 };
 
-typedef struct calc_fun
+typedef struct calc_func
 {
+    void *dl_handle;
     char name[65];
     int (*pf_calc_func)(long, long, long *);
-} calc_fun;
-
-char *func_name[MAX_NUM_CALC_FUNCS] = {
-    "Сумма (a + b)",
-    "Разность (a - b)",
-    "Произведение (a * b)",
-    "Частное (a / b)"
-};
-
-int (*pfunc[MAX_NUM_CALC_FUNCS])(long, long, long *) = {
-    my_add,
-    my_sub,
-    my_mul,
-    my_div
-};
+} calc_func;
 
 int num_calc_funcs = 0;
 
-int num_plugins = 0;
-
-struct calc_fun *arr_calc_funs;
-
-int open_plugins(int *const numpl);
-
-int close_plugins(int *const numpl);
-
-int load_calc_func(char *filename);
+struct calc_func *arr_calc_funcs = NULL;;
 
 int main(void)
 {
     setlocale(LC_ALL, "ru_RU.utf8");
     long command = 0;
     int ret = 0;
-    int i = 0;
     bool error = false;
 
     printf("\033c");
 
-    ret = open_plugins(&num_plugins);
+    ret = open_plugins(&num_calc_funcs);
 
-    if(0 == num_plugins)
+    if(0 == num_calc_funcs)
     {
         error = 1;
-        puts("Ошибка! Плагины не загружены");
+        puts("Ошибка! Плагины функций калькулятора не загружены");
         goto finally;
     }
    
+    printf("Загружено функций калькулятора (плагинов): %d\n", num_calc_funcs);
 
-    arr_calc_funs = calloc(MAX_NUM_CALC_FUNCS, sizeof(struct calc_fun));
-    
-    if (NULL == arr_calc_funs)
-    {
-        error = true;
-        puts("Ошибка! Память под структуры функций калькулятора не выделена!");
-        goto finally;
-    }
-
-    i = 0;
-
-    while (i < MAX_NUM_CALC_FUNCS)
-    {
-
-        if (NULL == pfunc[i] || arr_calc_funs[num_calc_funcs].name ==
-                                stpncpy(arr_calc_funs[num_calc_funcs].name,
-                                        func_name[i], 
-                                        sizeof(arr_calc_funs[num_calc_funcs].name) - 1))
-        {
-            printf("Ошибка инициализации структуры функции (шаг i = %d)\n", i);
-        }
-        else
-        {
-            arr_calc_funs[num_calc_funcs].name[sizeof(arr_calc_funs[num_calc_funcs].name)
-                - 1] = '\0';
-            arr_calc_funs[num_calc_funcs].pf_calc_func = pfunc[i];
-
-            num_calc_funcs++;
-        }
-        i++;
-    }
-
-    if (0 == i)
-    {
-        error = true;
-        puts("Функции калькулятора не загружены или ошибка при загрузке!");
-        goto finally;
-    }
-
-    printf("Загружено %d функций\n", num_calc_funcs);
-
-    for (int i = 0; i < MAX_NUM_CALC_FUNCS; i++)
+    for (int i = 0; i < num_calc_funcs; i++)
     {
         printf("Функция i = %d с именем %s, указатель %p\n",
                 i,
-                arr_calc_funs[i].name,
-                arr_calc_funs[i].pf_calc_func);
+                arr_calc_funcs[i].name,
+                arr_calc_funcs[i].pf_calc_func);
     }
+
+    sleep(2);
 
     do
     {
@@ -185,7 +114,7 @@ int main(void)
                     }
                     else if (1 == ret)
                     {
-                        puts("Параметры структуры функции не заданы");
+                        puts("Ошибка в данных структуры для функции калькулятора");
                     }
                 }
                 break;
@@ -197,10 +126,7 @@ int main(void)
 
     printf("\n");
 
-    if (NULL != arr_calc_funs)
-    {
-        free(arr_calc_funs);
-    }
+    close_plugins(&num_calc_funcs);
 
     return error;
 }
@@ -216,13 +142,13 @@ int run_calc_func(int num_func)
 
     do
     {
-        if (NULL == arr_calc_funs[num_func].pf_calc_func)
+        if (NULL == arr_calc_funcs[num_func].pf_calc_func)
         {
             ret = 1;
             goto finally;
         }
 
-        printf("%s.\nВвод аргументов:\n", arr_calc_funs[num_func].name);
+        printf("%s.\nВвод аргументов:\n", arr_calc_funcs[num_func].name);
 
         ret = get_numeral("a", &a, INT_MIN, INT_MAX);
 
@@ -232,7 +158,7 @@ int run_calc_func(int num_func)
 
              if (EOF != ret)
              {
-                ret = arr_calc_funs[num_func].pf_calc_func(a, b, &c);
+                ret = arr_calc_funcs[num_func].pf_calc_func(a, b, &c);
                 print_rezult_calc_func(c, ret );
 
                 ret = get_numeral("0 - для выхода в главное меню, 1 - для повтора" 
@@ -280,13 +206,13 @@ void print_rezult_calc_func(long rez, int err)
 // Вывод главного меню
 void print_menu_command()
 {
-//    printf("\033c");
+    printf("\033c");
     puts("\033[7mКалькулятор целых чисел\033[0m\n");
     puts("\033[4mАрифметические операции и команды:\033[0m");
 
     for (int i = 0; i < num_calc_funcs; i++)
     {
-        printf("%d. %s\n", i + 1, arr_calc_funs[i].name);
+        printf("%d. %s\n", i + 1, arr_calc_funcs[i].name);
     }
 
     puts("0. Выход");
@@ -353,22 +279,15 @@ int open_plugins(int *const numpl)
         if (NULL != rez_search && 3 == strlen(rez_search))
         {
             printf("%s\n", pdirent->d_name);
-            ret = load_calc_func(pdirent->d_name);
-            if (0 == ret)
+            ret = load_calc_func(pdirent->d_name, numpl);
+            if (0 != ret)
             {
-                (*numpl)++;
-            }
-            else
-            {
-                printf("Ошибка при загрузке плагина с именем %s\n", pdirent->d_name);
+                printf("Ошибки при загрузке плагина с именем %s\n", pdirent->d_name);
             }
         }
-        
     }
 
     closedir(pdir);
-
-    printf("num_plugins = %d\n", *numpl);
 
  finally:
 
@@ -376,7 +295,7 @@ int open_plugins(int *const numpl)
 }
 
 
-int load_calc_func(char *filename)
+int load_calc_func(char *filename, int *const numpl)
 {
     void *handle;
     int ret = 0;
@@ -386,15 +305,6 @@ int load_calc_func(char *filename)
     char *path = NULL;
     char *error = NULL;
 
-//    int (*calc_func)(long, long, long *const);
-//    char *error;
-//    struct Info_calc_func *info_calc_func;
-    
-
-//    char path[256] = {0};
-
-    // sizeof(namedir) - размер с завершающим '\0'
-    // strlen(filename) - длинна имени файла без учета '\0'
     size_t full_size_path = sizeof(namedir) + strlen(filename);
 
     if (full_size_path > 256)
@@ -404,12 +314,7 @@ int load_calc_func(char *filename)
         ret = 1;
         goto finally;
     }
-
-    printf("path = %ld, sizeof(namedir) = %ld, strlen(filename) = %ld\n",
-            full_size_path,
-            sizeof(namedir),
-            strlen(filename));
-
+    
     path = calloc(full_size_path, sizeof(char));
     if (NULL == path)
     {
@@ -428,8 +333,6 @@ int load_calc_func(char *filename)
         goto finally;
     }
 
-    printf("полный путь %s, n = %ld\n", path, num_char);
-
     handle = dlopen(path, RTLD_LAZY);
     if (NULL == handle)
     {
@@ -441,70 +344,21 @@ int load_calc_func(char *filename)
 
     dlerror();
 
-    // Загрузка структуры
+    ret = filling_arr_calc_funcs(handle, numpl);
 
-    error = dlerror();
-    if (NULL != error)
+    if (1 == ret)
     {
-        fprintf(stderr, "Ошибка dlsym(...) в функци load_calc_func(...) %s\n",
-                error);
-        
         if (0 != dlclose(handle))
         {
             error = dlerror();
             if (error != NULL)
             {
                 fprintf(stderr, "Ошибка dlclose(...) в функци load_calc_func(...) %s\n",
-                error);
+                        error);
             }
         }
-        ret = 1;
         goto finally;
     }
-
-
-    if (0 != dlclose(handle))
-    {
-        error = dlerror();
-        if (error != NULL)
-        {
-            fprintf(stderr, "Ошибка dlclose(...) в функци load_calc_func(...) %s\n",
-            error);
-        }
-    }
-    ret = 1;
-    goto finally;
-
-
-/*
-    info_calc_func = dlsym(handle1, "info_calc_func");
-
-    //calc_func = (int (*)(long, long, long *const))dlsym(handle, "my_add");
-
-    calc_func = dlsym(handle1, info_calc_func->calc_func);
-
-    (*calc_func)(a, b, &c);
-
-    printf("Func name = %s  calc_func = %s\n",
-            info_calc_func->name,
-            info_calc_func->calc_func);
-
-    printf("a = %ld  b = %ld  c = %ld\n", a, b, c);
-
-    info_calc_func = dlsym(handle2, "info_calc_func");
-
-    //calc_func = (int (*)(long, long, long *const))dlsym(handle, "my_add");
-
-    calc_func = dlsym(handle2, info_calc_func->calc_func);
-
-    (*calc_func)(a, b, &c);
-
-    printf("Func name = %s  calc_func = %s\n",
-            info_calc_func->name,
-            info_calc_func->calc_func);
-
-    printf("a = %ld  b = %ld  c = %ld\n", a, b, c);
-*/
 
  finally:
 
@@ -519,6 +373,112 @@ int load_calc_func(char *filename)
 int close_plugins(int *const numpl)
 {
     int ret = 0;
-//    dlclose(handle);
+    char *error = NULL;
+
+    for (int i = 0; i < *numpl; i++)
+    {
+        if (0 != dlclose(arr_calc_funcs[i].dl_handle))
+        {
+            error = dlerror();
+            if (error != NULL)
+            {
+                fprintf(stderr, "Ошибка dlclose(...) в функци load_calc_func(...) %s\n",
+                        error);
+            }
+            ret = 1;
+        }
+    }
+
+    if (NULL != arr_calc_funcs)
+    {
+        free(arr_calc_funcs);
+        arr_calc_funcs = NULL;
+    }
+
+    return ret;
+}
+
+
+int filling_arr_calc_funcs(void *handle, int *const numpl)
+{
+    int ret = 0;
+    void *tmp_func = NULL;
+    struct calc_func *tmp_new_mem = NULL;
+    struct Info_calc_func *info_calc_func = NULL;
+
+    char *error = NULL;
+
+    info_calc_func = dlsym(handle, "info_calc_func");
+    
+    error = dlerror();
+    if (error != NULL) {
+        fprintf(stderr, "Ошибка dlsym(...) загрузки структуры описания плагина в функции"
+                " filling_arr_calc_funcs(...) %s\n",
+            error);
+        ret = 1;
+        goto finally;
+    }
+    else if (NULL == info_calc_func)
+    {
+        puts("Указатель на структуру описания функции калькулятора в плагине = NULL\n");
+        ret = 1;
+        goto finally;
+    }
+
+    if (NULL == info_calc_func->name || 0 == strlen(info_calc_func->name))
+    {
+        puts("Ошибка в данных о функции калькулятора выполняемой плагином");
+        ret = 1;
+        goto finally;
+    }
+    else if (NULL == info_calc_func->calc_func || 0 == strlen(info_calc_func->calc_func))
+    {
+        puts("Ошибка в имени функции калькулятора в структуре данных плагина");
+        ret = 1;
+        goto finally;
+    }
+
+    tmp_func = dlsym(handle, info_calc_func->calc_func);
+
+    error = dlerror();
+    if (error != NULL) {
+        fprintf(stderr, "Ошибка dlsym(...) загрузки функции калькулятора в функции"
+                " filling_arr_calc_funcs(...) %s\n",
+            error);
+        ret = 1;
+        goto finally;
+    }
+
+    if (NULL == tmp_func)
+    {
+        puts("Указатель на функцию калькулятора в плагине = NULL\n");
+        ret = 1;
+        goto finally;
+    }
+
+//  tmp_new_mem = reallocarray(arr_calc_funcs, *numpl, sizeof(struct calc_func));
+    tmp_new_mem = realloc(arr_calc_funcs, ((*numpl) + 1) * sizeof(struct calc_func));
+
+    if(NULL == tmp_new_mem)
+    {
+        perror("Ошибка realloc(...) в функции filling_arr_calc_funcs(...)");
+        ret = 1;
+        goto finally;
+    }
+    
+    arr_calc_funcs = tmp_new_mem;
+
+    arr_calc_funcs[*numpl].dl_handle = handle;
+
+    stpncpy(arr_calc_funcs[*numpl].name, info_calc_func->name,
+            sizeof(arr_calc_funcs[*numpl].name) - 1);
+    arr_calc_funcs[*numpl].name[sizeof(arr_calc_funcs[*numpl].name) - 1] = '\0';
+
+    arr_calc_funcs[*numpl].pf_calc_func = tmp_func;
+
+    (*numpl)++;
+
+ finally:
+
     return ret;
 }

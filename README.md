@@ -12,4 +12,5 @@ struct Info_calc_func
 struct Info_calc_func info_calc_func = {
     "Сумма (a + b)",
     "my_add"
-};```
+};
+```
